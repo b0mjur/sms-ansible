@@ -4,8 +4,8 @@
   become: yes
 
   vars:
-    backend_repo: https://github.com/ArtemOganesyan/smstests.git
-    frontend_repo: https://github.com/ArtemOganesyan/coreui-free.git
+    backend_repo: https://github.com/b0mjur/smstests.git
+    frontend_repo: https://github.com/b0mjur/coreui-free.git
     backend_dir: /home/ec2-user/smstests
     frontend_dir: /home/ec2-user/coreui-free
     backend_conf: /etc/nginx/conf.d/backend.conf
