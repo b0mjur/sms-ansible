@@ -1,0 +1,162 @@
+---
+- name: Full Stack Deployment Playbook
+  hosts: all
+  become: yes
+
+  vars:
+    backend_repo: https://github.com/ArtemOganesyan/smstests.git
+    frontend_repo: https://github.com/ArtemOganesyan/coreui-free.git
+    backend_dir: /home/ec2-user/smstests
+    frontend_dir: /home/ec2-user/coreui-free
+    backend_conf: /etc/nginx/conf.d/backend.conf
+    frontend_conf: /etc/nginx/conf.d/frontend.conf
+    env_file: /home/ec2-user/coreui-free/.env
+    backend_url: http://backend.com
+    frontend_domain: test.com
+
+  tasks:
+    - name: Install required packages
+      package:
+        name:
+          - nginx
+          - git
+          - java
+          - maven
+          - nodejs
+          - npm
+        state: present
+
+    - name: Enable and start nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Remove backend directory if it exists
+      file:
+        path: "{{ backend_dir }}"
+        state: absent
+
+    - name: Clone backend project
+      git:
+        repo: "{{ backend_repo }}"
+        dest: "{{ backend_dir }}"
+        version: HEAD
+
+    - name: Create nginx backend configuration
+      copy:
+        dest: "{{ backend_conf }}"
+        content: |
+          server {
+              listen 80;
+              server_name {{ backend_url | regex_replace('http://', '') }};
+
+              location / {
+                  proxy_pass http://localhost:8080;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+
+    - name: Create nginx frontend configuration
+      copy:
+        dest: "{{ frontend_conf }}"
+        content: |
+          server {
+              listen 80;
+              server_name {{ frontend_domain }};
+
+              location / {
+                  proxy_pass http://localhost:3000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Build and test the backend
+      shell: mvn test
+      args:
+        chdir: "{{ backend_dir }}"
+      become: true
+
+    - name: Run backend app in background
+      shell: nohup mvn exec:java -Dexec.mainClass="SMS.Main" > /dev/null 2>&1 &
+      args:
+        chdir: "{{ backend_dir }}"
+      become: false
+
+    - name: Remove frontend directory if it exists
+      file:
+        path: "{{ frontend_dir }}"
+        state: absent
+        force: yes
+
+    - name: Clone frontend project
+      git:
+        repo: "{{ frontend_repo }}"
+        dest: "{{ frontend_dir }}"
+        version: HEAD
+
+    - name: Install frontend dependencies
+      npm:
+        path: "{{ frontend_dir }}"
+        production: no
+
+    - name: Modify vite.config.mjs - imports
+      replace:
+        path: "{{ frontend_dir }}/vite.config.mjs"
+        regexp: "import { defineConfig } from 'vite'"
+        replace: "import { defineConfig, loadEnv } from 'vite'"
+
+    - name: Modify vite.config.mjs - defineConfig function
+      replace:
+        path: "{{ frontend_dir }}/vite.config.mjs"
+        regexp: "export default defineConfig\\(\\(\\) => {"
+        replace: "export default defineConfig(({ mode }) => {"
+
+    - name: Add env loading line
+      lineinfile:
+        path: "{{ frontend_dir }}/vite.config.mjs"
+        insertafter: "export default defineConfig\\(\\(\\{ mode \\}\\) => \\{"
+        line: "  const env = loadEnv(mode, process.cwd())"
+
+    - name: Add allowedHosts to server config
+      lineinfile:
+        path: "{{ frontend_dir }}/vite.config.mjs"
+        insertafter: "port: 3000,"
+        line: "      allowedHosts: [env.VITE_HOST],"
+
+    - name: Replace fetch URL in multiple files
+      replace:
+        path: "{{ frontend_dir }}/{{ item }}"
+        regexp: "http://localhost:8080"
+        replace: "{{ backend_url }}"
+      loop:
+        - src/views/pages/login/Login.js
+        - src/views/students/NewStudent.js
+        - src/views/students/StudentList.js
+
+    - name: Create env file
+      copy:
+        dest: "{{ env_file }}"
+        content: |
+          VITE_API_URL={{ backend_url }}
+          VITE_HOST={{ frontend_domain }}
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+
+    - name: Run frontend app in background
+      shell: nohup npm run start -- --host 0.0.0.0 > /dev/null 2>&1 &
+      args:
+        chdir: "{{ frontend_dir }}"
+      become: true
