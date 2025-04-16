@@ -88,6 +88,13 @@
         chdir: "{{ backend_dir }}"
       become: true
 
+    - name: Set permissions for log file
+      ansible.builtin.file:
+        path: /home/ec2-user/smstests/student_server.log
+        mode: '0666'
+        owner: root
+        group: root
+        
     - name: Run backend app in background
       shell: nohup mvn exec:java -Dexec.mainClass="SMS.Main" > /dev/null 2>&1 &
       args:
